@@ -27,7 +27,7 @@ void *get_in_addr(struct sockaddr *sa)
 
 int main(int argc, char* argv[]) {
     int sockfd, numbytes;  
-    char buf[8];
+    int buf = number_generator();
     struct addrinfo hints, *servinfo, *p;
     int rv;
     char s[INET6_ADDRSTRLEN];
@@ -69,17 +69,12 @@ int main(int argc, char* argv[]) {
     printf("client: connected to %s\n", s);
 
     freeaddrinfo(servinfo);
-
-    if ((numbytes = recv(sockfd, buf, sizeof buf - 1, 0)) == -1) {
-        perror("recv");
-        exit(1);
-    }
-
-    buf[numbytes] = '\0';
-
-    printf("client: received '%s'\n",buf);
-
-
+    
+    if(send(sockfd, &buf, sizeof(buf), 0) == -1)
+        perror("send");
+    else
+        printf("client: sent %d\n", buf);
+    
     close(sockfd);
 
     return 0;
