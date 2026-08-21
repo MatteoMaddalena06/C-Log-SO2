@@ -9,9 +9,12 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <errno.h>
 
 #define STD_PERIOD 500
 #define STD_LISTEN_QUEUE_SIZE 10
+#define STD_MAX_LOFGILE_SIZE 200
+#define STD_LOGDIR_PATHNAME "."
 #define LOCAL false 
 #define REMOTE true
 
@@ -26,10 +29,10 @@ static void handle_sigint(int sig)
 
 struct server_conf {
     char* service;
-    double period;
+    unsigned long period;
     size_t listen_queue_size;
     bool verbose_selected;
-    size_t logfile_size;
+    size_t logfile_max_size;
     char* logdir_pathname;
 };
 
@@ -107,7 +110,7 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
             break;
 
         case 'p':
-            conf->period = strtod(arg, NULL);
+            conf->period = atoi(arg);
             break; 
 
         case 'l':
@@ -119,7 +122,7 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
             break;
 
         case 'm':
-            conf->logfile_size = atoi(arg);
+            conf->logfile_max_size = atoi(arg);
             break;
 
         case 'd':
@@ -135,15 +138,23 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
 int main(int argc, char** argv)
 {
     int return_code;
-    struct server_conf server_conf = {NULL, STD_PERIOD, STD_LISTEN_QUEUE_SIZE, false};
+
+    struct server_conf server_conf = {
+        NULL, 
+        STD_PERIOD, 
+        STD_LISTEN_QUEUE_SIZE, 
+        false,
+        STD_MAX_LOFGILE_SIZE,
+        STD_LOGDIR_PATHNAME
+    };
 
     struct argp_option options[] = {
         {"service",   's', "PORT NUMBER", 0, "Select the server port number (mandatory)"},
-        {"period",    'p', "TIME(ms)",    0, "Select the log writing period (std period 500ms)"},
-        {"lenght",    'l', "LENGHT",      0, "Select the listen queue size"},
+        {"period",    'p', "TIME(ns)",    0, "Select the log writing period (std period 500ms)"},
+        {"lenght",    'l', "LENGHT",      0, "Select the listen queue size (std lenght 10)"},
         {"verbose",   'v',  NULL,         0, "Force the log to stdout"},
-        {"maxsize",   'm', "SIZE",        0, "Select the maximum logs file size"},
-        {"directory", 'd', "PATHNAME",    0, "Select the log directory pathname"},
+        {"maxsize",   'm', "SIZE",        0, "Select the maximum logs file size (std maxsize 200)"},
+        {"directory", 'd', "PATHNAME",    0, "Select the log directory pathname (std pathname \".\")"},
         {0}
     };
 
@@ -158,12 +169,6 @@ int main(int argc, char** argv)
     if(server_conf.service == NULL)
     {
         fprintf(stderr, "--service (-s) option is mandatory\n");
-        return EXIT_FAILURE;
-    }
-
-    if(server_conf.period <= 0)
-    {
-        fprintf(stderr, "%f is an invalid writing period (should be greater than 0)\n", server_conf.period);
         return EXIT_FAILURE;
     }
 
@@ -256,8 +261,13 @@ int main(int argc, char** argv)
     if(return_code)
     {
         counter_down(&threads_count);
-        fprintf(stderr, "Unable to create the flush buffer thread (forcing logs to stdout): %s", strerror(return_code));
-        server_conf.verbose_selected = true;
+        pthread_mutex_destroy(&stdout_mux);
+        pthread_mutex_destroy(&stderr_mux);
+        free_logbuffer(&logbuffer);
+        free_counter(&threads_count);
+        close(listen_sfd);
+        fprintf(stderr, "Unable to create the logger thread: %s\n", strerror(return_code));
+        return EXIT_FAILURE;
     }
     else 
         pthread_detach(log_thread);
@@ -304,9 +314,10 @@ int main(int argc, char** argv)
         if(return_code)
         {
             counter_down(&threads_count);
+            close(connection_sfd);
             free(conn_thread_in);
             pthread_mutex_lock(&stderr_mux);
-            fprintf(stderr, "Unable to create the connection handler thread: %s", strerror(return_code));
+            fprintf(stderr, "Unable to create the connection handler thread: %s\n", strerror(return_code));
             pthread_mutex_unlock(&stderr_mux);
             continue;
         };
