@@ -9,7 +9,6 @@ logbuffer create_logbuffer()
     logbuffer.head = 0;
     logbuffer.size = 1; 
     pthread_mutex_init(&logbuffer.sync_mux, NULL);
-    logbuffer.unusable = false;
 
     return logbuffer;
 }
@@ -17,12 +16,6 @@ logbuffer create_logbuffer()
 bool push_log(logbuffer* logbuffer, struct log log)
 {
     pthread_mutex_lock(&logbuffer->sync_mux);
-
-    if(logbuffer == NULL || logbuffer->unusable)
-    {
-        pthread_mutex_unlock(&logbuffer->sync_mux);
-        return false;
-    }
 
     logbuffer->head++;
 
@@ -52,12 +45,6 @@ bool consume_logs(logbuffer* logbuffer, bool(*consumer)(struct log ))
 {
     pthread_mutex_lock(&logbuffer->sync_mux);
 
-    if(logbuffer == NULL || logbuffer->unusable || consumer == NULL)
-    {
-        pthread_mutex_unlock(&logbuffer->sync_mux);
-        return false;
-    }
-
     for(unsigned long i = 0; i < logbuffer->head; i++)
     {
         if(!consumer(logbuffer->data[i]))
@@ -76,16 +63,8 @@ bool consume_logs(logbuffer* logbuffer, bool(*consumer)(struct log ))
 
 void free_logbuffer(logbuffer* logbuffer)
 {
-    pthread_mutex_lock(&logbuffer->sync_mux);
-
-    if(logbuffer == NULL || logbuffer->unusable)
-    {
-        pthread_mutex_unlock(&logbuffer->sync_mux);
-        return;
-    }
-
     free(logbuffer->data);
-    logbuffer->unusable = true;
-
-    pthread_mutex_unlock(&logbuffer->sync_mux);
+    logbuffer->data = NULL;
+    logbuffer->head = -1;
+    logbuffer->size = 0;
 }

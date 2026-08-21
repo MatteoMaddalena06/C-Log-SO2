@@ -18,7 +18,6 @@ typedef struct {
     unsigned long head;
     size_t size;
     pthread_mutex_t sync_mux;
-    bool unusable;
 
 } logbuffer;
 

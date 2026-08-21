@@ -1,5 +1,6 @@
 #include "lib/header/logbuffer.h"
 #include "lib/header/counter.h"
+#include <bits/pthreadtypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -19,7 +20,7 @@ extern void* connection_handler(void*);
 extern void* flush_logbuffer(void*);
 extern bool  flush_consumer(struct log);
 
-static volatile sig_atomic_t stop = 0;
+volatile sig_atomic_t stop = 0;
 
 static void handle_sigint(int sig)
 { stop = 1; }
@@ -27,8 +28,10 @@ static void handle_sigint(int sig)
 struct server_conf {
     char* service;
     double period;
-    unsigned int listen_queue_size;
+    size_t listen_queue_size;
     bool verbose_selected;
+    size_t logfile_size;
+    char* logdir_pathname;
 };
 
 struct thread_in {
@@ -36,6 +39,7 @@ struct thread_in {
     int connection_sfd;
     counter* threads_count;
     logbuffer* logbuffer;
+    pthread_mutex_t* out_mux;
 };
 
 static struct addrinfo init_connection_req()
@@ -114,6 +118,14 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
             conf->verbose_selected = true;
             break;
 
+        case 'm':
+            conf->logfile_size = atoi(arg);
+            break;
+
+        case 'd':
+            conf->logdir_pathname = arg;
+            break;
+
         default: return ARGP_ERR_UNKNOWN;     
     }
 
@@ -125,10 +137,12 @@ int main(int argc, char** argv)
     struct server_conf server_conf = {NULL, STD_PERIOD, STD_LISTEN_QUEUE_SIZE, false};
 
     struct argp_option options[] = {
-        {"service", 's', "PORT NUMBER", 0, "Select the server port number (mandatory)"},
-        {"period",  'p', "TIME(ms)",    0, "select the log writing period (std period 500ms)"},
-        {"lenght",  'l', "LENGHT",      0, "select the listen queue size"},
-        {"verbose", 'v',  NULL,         0, "force the log to stdout"},
+        {"service",   's', "PORT NUMBER", 0, "Select the server port number (mandatory)"},
+        {"period",    'p', "TIME(ms)",    0, "Select the log writing period (std period 500ms)"},
+        {"lenght",    'l', "LENGHT",      0, "Select the listen queue size"},
+        {"verbose",   'v',  NULL,         0, "Force the log to stdout"},
+        {"maxsize",   'm', "SIZE",        0, "Select the maximum logs file size"},
+        {"directory", 'd', "PATHNAME",    0, "Select the log directory pathname"},
         {0}
     };
 
@@ -219,19 +233,27 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;        
     }
 
+    pthread_mutex_t out_mux;
+    pthread_mutex_init(&out_mux, NULL);
     logbuffer logbuffer = create_logbuffer();
-    struct thread_in log_thread_in = {.server_conf = &server_conf, .logbuffer = &logbuffer};
+    counter threads_count = create_counter();
+
+    struct thread_in log_thread_in = {
+        .server_conf = &server_conf, 
+        .threads_count = &threads_count,
+        .logbuffer = &logbuffer, 
+        .out_mux = &out_mux
+    };
+
     pthread_t log_thread;
 
-    if(pthread_create(&log_thread, NULL, &flush_logbuffer, &log_thread_in ))
+    if(pthread_create(&log_thread, NULL, &flush_logbuffer, &log_thread_in))
     {
         perror("Unable to create the flush buffer thread (forcing logs to stdout)");
         server_conf.verbose_selected = true;
     }
     else 
         pthread_detach(log_thread);
-
-    counter threads_count = create_counter();
 
     while(!stop)
     {
@@ -240,7 +262,11 @@ int main(int argc, char** argv)
         if(connection_sfd == -1)
         {
             if (errno != EINTR)
+            {
+                pthread_mutex_lock(&out_mux);
                 perror("Unable to accept an incoming connection");
+                pthread_mutex_unlock(&out_mux);
+            }
 
             continue; 
         }
@@ -250,7 +276,9 @@ int main(int argc, char** argv)
         if(conn_thread_in == NULL)
         {
             close(connection_sfd);
+            pthread_mutex_lock(&out_mux);
             perror("Incoming connection refused due to thread memory allocation error");
+            pthread_mutex_unlock(&out_mux);
             continue;
         }
 
@@ -258,6 +286,7 @@ int main(int argc, char** argv)
         conn_thread_in->connection_sfd = connection_sfd;
         conn_thread_in->threads_count = &threads_count;
         conn_thread_in->logbuffer = &logbuffer;
+        conn_thread_in->out_mux = &out_mux;
 
         counter_up(&threads_count);
 
@@ -267,28 +296,39 @@ int main(int argc, char** argv)
         {
             counter_down(&threads_count);
             free(conn_thread_in);
+            pthread_mutex_lock(&out_mux);
             perror("Unable to create the connection handler thread");
+            pthread_mutex_unlock(&out_mux);
             continue;
         };
 
         pthread_detach(thread);
 
+        pthread_mutex_lock(&out_mux);
         printf("Accepted connection from ");
         print_socket_address(connection_sfd, REMOTE);
         printf("\n");
+        pthread_mutex_unlock(&out_mux);
     }
 
     close(listen_sfd);
+    pthread_mutex_lock(&out_mux);
     printf("\nListener closed\n");
+    pthread_mutex_unlock(&out_mux);
 
+    pthread_mutex_lock(&out_mux);
     printf("Forcing the closure of connections with the client\n");
+    pthread_mutex_unlock(&out_mux);
+    
     wait_until_zero(&threads_count);
-    printf("All clients disconnected\n");
+
+    printf("All clients disconnected\nLogger terminated");
 
     printf("Forcing logs flush");
     consume_logs(&logbuffer, &flush_consumer);
     printf("Exit");
 
+    pthread_mutex_destroy(&out_mux);
     free_logbuffer(&logbuffer);
     free_counter(&threads_count);
 
