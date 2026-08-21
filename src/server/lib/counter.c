@@ -22,7 +22,12 @@ void counter_up(counter* count)
 void counter_down(counter* count)
 {
     pthread_mutex_lock(&count->sync_mux);
+
     count->count--;
+
+    if(!count->count)
+        pthread_cond_signal(&count->count_cond);
+
     pthread_mutex_unlock(&count->sync_mux);
 }
 
@@ -32,16 +37,6 @@ void wait_until_zero(counter* count)
 
     while(count->count)
         pthread_cond_wait(&count->count_cond, &count->sync_mux);
-
-    pthread_mutex_unlock(&count->sync_mux);
-}
-
-void notify_on_zero(counter* count)
-{
-    pthread_mutex_lock(&count->sync_mux);
-
-    if(!count->count)
-        pthread_cond_signal(&count->count_cond);
 
     pthread_mutex_unlock(&count->sync_mux);
 }

@@ -17,7 +17,7 @@
 
 extern void* connection_handler(void*);
 extern void* flush_logbuffer(void*);
-extern void  flush_consumer(struct log);
+extern bool  flush_consumer(struct log);
 
 static volatile sig_atomic_t stop = 0;
 
@@ -288,6 +288,9 @@ int main(int argc, char** argv)
     printf("Forcing logs flush");
     consume_logs(&logbuffer, &flush_consumer);
     printf("Exit");
+
+    free_logbuffer(&logbuffer);
+    free_counter(&threads_count);
 
     return EXIT_SUCCESS;
 }

@@ -14,7 +14,6 @@ counter create_counter();
 void counter_up(counter*);
 void counter_down(counter*);
 void wait_until_zero(counter*);
-void notify_on_zero(counter*);
 void free_counter(counter*);
 
 #endif
