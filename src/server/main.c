@@ -1,6 +1,5 @@
 #include "lib/header/logbuffer.h"
 #include "lib/header/counter.h"
-#include <bits/pthreadtypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -39,7 +38,8 @@ struct thread_in {
     int connection_sfd;
     counter* threads_count;
     logbuffer* logbuffer;
-    pthread_mutex_t* out_mux;
+    pthread_mutex_t* stdout_mux;
+    pthread_mutex_t* stderr_mux;
 };
 
 static struct addrinfo init_connection_req()
@@ -134,6 +134,7 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
 
 int main(int argc, char** argv)
 {
+    int return_code;
     struct server_conf server_conf = {NULL, STD_PERIOD, STD_LISTEN_QUEUE_SIZE, false};
 
     struct argp_option options[] = {
@@ -168,7 +169,7 @@ int main(int argc, char** argv)
 
     struct addrinfo req = init_connection_req(), *connection_confs;
 
-    int return_code = getaddrinfo(NULL, server_conf.service, &req, &connection_confs);
+    return_code = getaddrinfo(NULL, server_conf.service, &req, &connection_confs);
 
     if(return_code != 0)
     {
@@ -233,8 +234,9 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;        
     }
 
-    pthread_mutex_t out_mux;
-    pthread_mutex_init(&out_mux, NULL);
+    pthread_mutex_t stdout_mux, stderr_mux;
+    pthread_mutex_init(&stdout_mux, NULL);
+    pthread_mutex_init(&stderr_mux, NULL);
     logbuffer logbuffer = create_logbuffer();
     counter threads_count = create_counter();
 
@@ -242,14 +244,19 @@ int main(int argc, char** argv)
         .server_conf = &server_conf, 
         .threads_count = &threads_count,
         .logbuffer = &logbuffer, 
-        .out_mux = &out_mux
+        .stdout_mux = &stdout_mux,
+        .stderr_mux = &stderr_mux
     };
 
-    pthread_t log_thread;
+    counter_up(&threads_count);
 
-    if(pthread_create(&log_thread, NULL, &flush_logbuffer, &log_thread_in))
+    pthread_t log_thread;
+    return_code = pthread_create(&log_thread, NULL, &flush_logbuffer, &log_thread_in);
+
+    if(return_code)
     {
-        perror("Unable to create the flush buffer thread (forcing logs to stdout)");
+        counter_down(&threads_count);
+        fprintf(stderr, "Unable to create the flush buffer thread (forcing logs to stdout): %s", strerror(return_code));
         server_conf.verbose_selected = true;
     }
     else 
@@ -263,9 +270,9 @@ int main(int argc, char** argv)
         {
             if (errno != EINTR)
             {
-                pthread_mutex_lock(&out_mux);
+                pthread_mutex_lock(&stderr_mux);
                 perror("Unable to accept an incoming connection");
-                pthread_mutex_unlock(&out_mux);
+                pthread_mutex_unlock(&stderr_mux);
             }
 
             continue; 
@@ -276,9 +283,9 @@ int main(int argc, char** argv)
         if(conn_thread_in == NULL)
         {
             close(connection_sfd);
-            pthread_mutex_lock(&out_mux);
+            pthread_mutex_lock(&stderr_mux);
             perror("Incoming connection refused due to thread memory allocation error");
-            pthread_mutex_unlock(&out_mux);
+            pthread_mutex_unlock(&stderr_mux);
             continue;
         }
 
@@ -286,49 +293,52 @@ int main(int argc, char** argv)
         conn_thread_in->connection_sfd = connection_sfd;
         conn_thread_in->threads_count = &threads_count;
         conn_thread_in->logbuffer = &logbuffer;
-        conn_thread_in->out_mux = &out_mux;
+        conn_thread_in->stdout_mux = &stdout_mux;
+        conn_thread_in->stderr_mux = &stderr_mux;
 
         counter_up(&threads_count);
 
         pthread_t thread;
+        return_code = pthread_create(&thread, NULL, &connection_handler, conn_thread_in);
 
-        if(pthread_create(&thread, NULL, &connection_handler, conn_thread_in))
+        if(return_code)
         {
             counter_down(&threads_count);
             free(conn_thread_in);
-            pthread_mutex_lock(&out_mux);
-            perror("Unable to create the connection handler thread");
-            pthread_mutex_unlock(&out_mux);
+            pthread_mutex_lock(&stderr_mux);
+            fprintf(stderr, "Unable to create the connection handler thread: %s", strerror(return_code));
+            pthread_mutex_unlock(&stderr_mux);
             continue;
         };
 
         pthread_detach(thread);
 
-        pthread_mutex_lock(&out_mux);
+        pthread_mutex_lock(&stdout_mux);
         printf("Accepted connection from ");
         print_socket_address(connection_sfd, REMOTE);
         printf("\n");
-        pthread_mutex_unlock(&out_mux);
+        pthread_mutex_unlock(&stdout_mux);
     }
 
     close(listen_sfd);
-    pthread_mutex_lock(&out_mux);
+    pthread_mutex_lock(&stdout_mux);
     printf("\nListener closed\n");
-    pthread_mutex_unlock(&out_mux);
+    pthread_mutex_unlock(&stdout_mux);
 
-    pthread_mutex_lock(&out_mux);
+    pthread_mutex_lock(&stdout_mux);
     printf("Forcing the closure of connections with the client\n");
-    pthread_mutex_unlock(&out_mux);
-    
+    pthread_mutex_unlock(&stdout_mux);
+
     wait_until_zero(&threads_count);
 
-    printf("All clients disconnected\nLogger terminated");
+    printf("All clients disconnected\nLogger terminated\n");
 
-    printf("Forcing logs flush");
+    printf("Forcing logs flush\n");
     consume_logs(&logbuffer, &flush_consumer);
-    printf("Exit");
+    printf("Exit\n");
 
-    pthread_mutex_destroy(&out_mux);
+    pthread_mutex_destroy(&stdout_mux);
+    pthread_mutex_destroy(&stderr_mux);
     free_logbuffer(&logbuffer);
     free_counter(&threads_count);
 
