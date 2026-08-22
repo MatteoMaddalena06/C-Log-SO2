@@ -1,4 +1,3 @@
-#include <asm-generic/errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -172,7 +171,7 @@ int main(int argc, char* argv[])
         if(connection_sfd == -1) 
         {
             perror("Socket creation error");
-            fprintf(stderr, "(trying next connection configuration...)\n");
+            fprintf(stderr, " (trying next connection configuration...)\n");
             continue;
         }
 
@@ -180,7 +179,7 @@ int main(int argc, char* argv[])
         {
             close(connection_sfd);
             perror("Unable to perform connection to the server");
-            fprintf(stderr, "(trying next connection configuration...)\n");
+            fprintf(stderr, " (trying next connection configuration...)\n");
             continue;
         }
 
@@ -201,27 +200,30 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-    printf("Connection succed\n");
+    printf("Connection succeed\n");
 
     srand(time(NULL));
 
     if(set_sig_handler(SIGINT, &handle_sigint) < 0)
     {
+        close(connection_sfd);
         perror("Unable to set SIGINT handler");
         return EXIT_FAILURE;        
     }
 
     if(set_sig_handler(SIGPIPE, SIG_IGN) < 0)
     {
+        close(connection_sfd);
         perror("Unable to ignore SIGPIPE");
         return EXIT_FAILURE;        
     }
 
     for(unsigned long i = 0; (i < user_in.data_number || user_in.infinite_data) && !stop; i++)
     {
-        int random_data = htonl(rand());
+        int random_data = rand();
+        int dat_to_transfer = htonl(random_data);
 
-        if(send(connection_sfd, &random_data, sizeof(int), 0) == -1)
+        if(send(connection_sfd, &dat_to_transfer, sizeof(int), 0) == -1)
         {
             if(errno == EPIPE || errno == ECONNRESET)
             {
