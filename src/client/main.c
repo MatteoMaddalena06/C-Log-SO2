@@ -53,6 +53,7 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
 
         case 'd':
             user_in->transmission_delay = strtoul(arg, NULL, 10);
+            user_in->delay_selected = true;
             break;
 
         default: return ARGP_ERR_UNKNOWN;     
@@ -65,7 +66,7 @@ int main(int argc, char* argv[])
 {
     int return_code;
 
-    struct user_in user_in = {NULL, NULL, 0, false, false};
+    struct user_in user_in = {NULL, NULL, 0, false, false, false};
 
     struct argp_option options[] = {
         {"host",     'h', "HOSTNAME",    0, "Select server host name (mandatory)"},
