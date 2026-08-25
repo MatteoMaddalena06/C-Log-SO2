@@ -13,34 +13,32 @@
 
 extern volatile sig_atomic_t stop;
 
-// configurazione per consumer
 static struct thread_in* thread_in;
 static char curr_filename[256];
 FILE* logfile;  
-static size_t logfile_size;
+static size_t curr_logfile_size;
 static unsigned long file_counter;
 
 bool flush_consumer(struct log log)
 {
-    if(logfile == NULL || logfile_size >= thread_in->server_conf->logfile_max_size) //raggiunto max_size
+    if(logfile == NULL || curr_logfile_size >= thread_in->server_conf->logfile_max_size)
     {
         if(logfile != NULL)
             fclose(logfile); 
 
         snprintf(curr_filename, sizeof(curr_filename), "%s/log_%ld_%ld.txt", thread_in->server_conf->logdir_pathname, time(NULL), file_counter);
-        logfile = fopen(curr_filename, "wa"); //nuovo file
+        logfile = fopen(curr_filename, "wa"); 
 
         if(logfile == NULL)
             return false;
 
         file_counter++;
-        logfile_size = 0;
+        curr_logfile_size = 0;
     }
 
-    // scrittura log
     fprintf(logfile, (log.disconnected) ? "[%lld, %s:%s, DISCONNECT]\n" : "[%lld, %s:%s, %d]\n", log.timestamp, log.host, log.service, log.data); 
     fflush(logfile);
-    logfile_size++;
+    curr_logfile_size++;
 
     if(thread_in->server_conf->verbose_selected)
     {
@@ -58,7 +56,7 @@ void* flush_logbuffer(void* arg)
 
     thread_in = in;
     logfile = NULL;
-    logfile_size = 0;
+    curr_logfile_size = 0;
     file_counter = 0;
 
     while(!stop)
@@ -68,9 +66,9 @@ void* flush_logbuffer(void* arg)
             thread_in->server_conf->period % 1000000000L
         };
 
-        nanosleep(&req, NULL); //aspetta period 
+        nanosleep(&req, NULL); 
 
-        if(!consume_logs(in->logbuffer, &flush_consumer)) // ripetere flush_consumer per ogni log in logbuffer
+        if(!consume_logs(in->logbuffer, &flush_consumer)) 
         {
             pthread_mutex_lock(in->stderr_mux);
             fprintf(stderr, "Unable to flush logbuffer in %s: %s\n", curr_filename, strerror(errno));
@@ -78,6 +76,5 @@ void* flush_logbuffer(void* arg)
         }
     }
 
-    //termina il logger thread, decremento contatore di attivi
     counter_down(in->threads_count);
 }

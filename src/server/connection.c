@@ -18,30 +18,19 @@ extern volatile sig_atomic_t stop;
 
 void* connection_handler(void* arg)
 {
-    struct thread_in* in = (struct thread_in*)arg;
-    char host[NI_MAXHOST];  //per IP
-    char service[NI_MAXSERV]; // per porta client
+    int return_code;
 
-    //Recuperiamo l'indirizzo del client.
-    
+    struct thread_in* in = (struct thread_in*)arg;
+    char host[NI_MAXHOST], service[NI_MAXSERV]; 
+
     struct sockaddr_storage address;
     socklen_t address_len = sizeof(address);
 
-    //ogni client ha il suo socket in->connection_sfd
     if(getpeername(in->connection_sfd, (struct sockaddr*)&address, &address_len) != -1) 
     {
-        //convertire indirizzo e porta in stringhe dentro host e service
-        int return_code = getnameinfo(
-            (struct sockaddr*)&address,
-            address_len,
-            host,
-            sizeof(host),
-            service,
-            sizeof(service),
-            NI_NUMERICHOST | NI_NUMERICSERV
-        );
+        return_code = getnameinfo((struct sockaddr*)&address, address_len, host, sizeof(host),
+            service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);
 
-        // se getnameinfo() da errore
         if(return_code)  
         {
             strcpy(host, "U");
@@ -62,18 +51,17 @@ void* connection_handler(void* arg)
         pthread_mutex_unlock(in->stderr_mux);
     }
 
-    while(stop != 1)
+    while(!stop)
     {
-        fd_set readfds;  // set di file descriptors
-        FD_ZERO(&readfds);  //svuoto l'insieme
-        FD_SET(in->connection_sfd, &readfds);  //aggiungo socket del client
+        fd_set readfds;  
+        FD_ZERO(&readfds);  
+        FD_SET(in->connection_sfd, &readfds); 
 
-        struct timeval timeout = {0 /*sec*/, 100000 /*ms*/};
+        struct timeval timeout = {0, 100000};
 
-        int ret = select(in->connection_sfd + 1, &readfds, NULL, NULL,&timeout);
+        int return_code = select(in->connection_sfd + 1, &readfds, NULL, NULL,&timeout);
         
-        //val di ret: >0 c'è un socketb pronto, 0 timeout, <0 errore
-        if(ret < 0) // errore di select
+        if(return_code < 0) 
         {
             if(errno == EINTR)
                 continue;
@@ -85,22 +73,22 @@ void* connection_handler(void* arg)
             break;
         }
 
-        if(ret == 0)   //timeout, nessun dato disponibile, torna a controllare stop
+        if(return_code == 0)  
             continue;
 
-        if(FD_ISSET(in->connection_sfd, &readfds))  // socket è pronto per essere letto?
+        if(FD_ISSET(in->connection_sfd, &readfds))  
         {
             int data;
 
-            ssize_t n = recv(in->connection_sfd, &data, sizeof(int), 0); //ricezione msg, n num byte ricevuti
+            ssize_t bytes = recv(in->connection_sfd, &data, sizeof(int), 0); 
             data = ntohl(data);
             
-            if(n == 0)  // client ha chiuso connection
+            if(bytes == 0)  
                 break;
 
-            if(n < 0)  //errore recv
+            if(bytes < 0)  
             {
-                if(errno == EINTR) // recv() è stato interrotto da un segnale
+                if(errno == EINTR) 
                     continue;
 
                 pthread_mutex_lock(in->stderr_mux);
@@ -110,7 +98,6 @@ void* connection_handler(void* arg)
                 break;
             }
 
-            // mettere log nel buffer.
             if(!push_log(in->logbuffer, create_log(time(NULL), host, service, data, ELSE)))
             {
                 pthread_mutex_lock(in->stderr_mux);
@@ -136,5 +123,5 @@ void* connection_handler(void* arg)
     pthread_mutex_unlock(in->stdout_mux);
 
     counter_down(in->threads_count);  //thread termina
-    free(in);  //Liberiamo la memoria allocata dal main per questo thread.
+    free(in);  
 }

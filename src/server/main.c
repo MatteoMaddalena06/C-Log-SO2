@@ -193,8 +193,8 @@ int main(int argc, char** argv)
         fprintf(stderr, "Unable to create the logger thread: %s\n", strerror(return_code));
         return EXIT_FAILURE;
     }
-    else 
-        pthread_detach(log_thread);
+   
+    pthread_detach(log_thread);
 
     while(!stop)
     {
@@ -261,7 +261,7 @@ int main(int argc, char** argv)
     pthread_mutex_unlock(&stdout_mux);
 
     pthread_mutex_lock(&stdout_mux);
-    printf("Forcing the closure of connections with the client\n");
+    printf("Waiting the closure of connections with the client\n");
     pthread_mutex_unlock(&stdout_mux);
 
     wait_until_zero(&threads_count);
