@@ -23,6 +23,7 @@ struct user_in {
     char* server_service;
     unsigned long data_number;
     unsigned long transmission_delay;
+    bool delay_selected;
     bool data_number_selected;
     bool infinite_data;
 };
@@ -71,7 +72,7 @@ int main(int argc, char* argv[])
         {"service",  's', "SERVICENAME", 0, "Select server service name (mandatory)"},
         {"times",    't', "TIMES",       0, "Select number of transmitted data items"},
         {"infinite", 'i', NULL,          0, "Enables continuos data transmission"}, 
-        {"delay",    'd', "TIME(ns)",    0, "Select data transmission delat"},
+        {"delay",    'd', "TIME(ns)",    0, "Select data transmission delay"},
         {0}
     };
 
@@ -171,13 +172,16 @@ int main(int argc, char* argv[])
         int random_data = rand();
         int data_to_transfer = htonl(random_data);
 
-        struct timespec req = {
-            user_in.transmission_delay / 1000000000L,
-            user_in.transmission_delay % 1000000000L,
-        };
+        if(user_in.delay_selected)
+        {
+            struct timespec req = {
+                user_in.transmission_delay / 1000000000L,
+                user_in.transmission_delay % 1000000000L,
+            };
 
-        nanosleep(&req, NULL);
-
+            nanosleep(&req, NULL);
+        }
+        
         if(send(connection_sfd, &data_to_transfer, sizeof(int), 0) == -1)
         {
             if(errno == EPIPE || errno == ECONNRESET)
