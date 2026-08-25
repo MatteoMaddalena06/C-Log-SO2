@@ -1,5 +1,7 @@
+#include "../shared/shared.h"
 #include "lib/header/logbuffer.h"
 #include "lib/header/counter.h"
+#include "lib/header/thread_in.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -11,93 +13,15 @@
 #include <pthread.h>
 #include <errno.h>
 
-#define STD_PERIOD 500
-#define STD_LISTEN_QUEUE_SIZE 10
-#define STD_MAX_LOFGILE_SIZE 200
-#define STD_LOGDIR_PATHNAME "."
-#define LOCAL false 
-#define REMOTE true
-
 extern void* connection_handler(void*);
 extern void* flush_logbuffer(void*);
 extern bool  flush_consumer(struct log);
+extern FILE* logfile;
 
 volatile sig_atomic_t stop = 0;
 
 static void handle_sigint(int sig)
 { stop = 1; }
-
-struct server_conf {
-    char* service;
-    unsigned long period;
-    size_t listen_queue_size;
-    bool verbose_selected;
-    size_t logfile_max_size;
-    char* logdir_pathname;
-};
-
-struct thread_in {
-    struct server_conf* server_conf;
-    int connection_sfd;
-    counter* threads_count;
-    logbuffer* logbuffer;
-    pthread_mutex_t* stdout_mux;
-    pthread_mutex_t* stderr_mux;
-};
-
-static struct addrinfo init_connection_req()
-{
-    struct addrinfo req;
-
-    memset(&req, 0, sizeof(req));
-    req.ai_family = AF_INET;
-    req.ai_socktype = SOCK_STREAM;
-    req.ai_flags = AI_PASSIVE;
-
-    return req;
-}
-
-static int set_sig_handler(int sig, void (*handler)(int))
-{
-    struct sigaction signal_action;
-
-    memset(&signal_action, 0, sizeof(signal_action));
-    signal_action.sa_handler = handler;
-    sigemptyset(&signal_action.sa_mask);
-    signal_action.sa_flags = 0;
-
-    if(sigaction(sig, &signal_action, NULL) == -1)
-        return -1;
-
-    return 0;
-}  
-
-static void print_socket_address(int sock_fd, bool remote)
-{
-    struct sockaddr_storage address;
-    socklen_t addrlen = sizeof(address);
-
-    if(!remote && getsockname(sock_fd, (struct sockaddr* )&address, &addrlen) == -1)
-    {
-        perror("...unable to get socket local address");
-        return;
-    }
-    else if(remote && getpeername(sock_fd, (struct sockaddr *)&address, &addrlen) == -1)
-    {
-        perror("...unable to get socket remote address");
-        return;
-    }
-
-    char host[NI_MAXHOST], service[NI_MAXSERV];
-    int return_code = getnameinfo((struct sockaddr *)&address, addrlen, host, sizeof(host), service, sizeof(service), 
-        NI_NUMERICHOST | NI_NUMERICSERV);
-
-    if(!return_code)
-        printf("%s:%s", host, service);
-
-    else
-        fprintf(stderr, "...unable to get socket address: %s\n", gai_strerror(return_code));
-}
 
 static int parse_opt(int key, char* arg, struct argp_state* state)
 {
@@ -110,11 +34,11 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
             break;
 
         case 'p':
-            conf->period = atoi(arg);
+            conf->period = strtoul(arg, NULL, 10);
             break; 
 
         case 'l':
-            conf->listen_queue_size = atoi(arg);
+            conf->listen_queue_size = strtoul(arg, NULL, 10);
             break;
 
         case 'v':
@@ -122,7 +46,7 @@ static int parse_opt(int key, char* arg, struct argp_state* state)
             break;
 
         case 'm':
-            conf->logfile_max_size = atoi(arg);
+            conf->logfile_max_size = strtoul(arg, NULL, 10);
             break;
 
         case 'd':
@@ -172,7 +96,7 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    struct addrinfo req = init_connection_req(), *connection_confs;
+    struct addrinfo req = init_connection_req(SERVER), *connection_confs;
 
     return_code = getaddrinfo(NULL, server_conf.service, &req, &connection_confs);
 
@@ -323,7 +247,7 @@ int main(int argc, char** argv)
         };
 
         pthread_detach(thread);
-
+        
         pthread_mutex_lock(&stdout_mux);
         printf("Accepted connection from ");
         print_socket_address(connection_sfd, REMOTE);
@@ -347,6 +271,9 @@ int main(int argc, char** argv)
     printf("Forcing logs flush\n");
     consume_logs(&logbuffer, &flush_consumer);
     printf("Exit\n");
+
+    if(logfile != NULL)
+        fclose(logfile);
 
     pthread_mutex_destroy(&stdout_mux);
     pthread_mutex_destroy(&stderr_mux);

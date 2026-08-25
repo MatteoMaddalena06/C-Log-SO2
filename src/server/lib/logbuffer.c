@@ -13,6 +13,19 @@ logbuffer create_logbuffer()
     return logbuffer;
 }
 
+struct log create_log(time_t timestamp, char* host, char* service, int data, bool disconnected)
+{
+    struct log log;
+
+    log.timestamp = timestamp;
+    strcpy(log.host, host);
+    strcpy(log.service, service);
+    log.data = data;
+    log.disconnected = disconnected;  
+
+    return log;
+}
+
 bool push_log(logbuffer* logbuffer, struct log log)
 {
     pthread_mutex_lock(&logbuffer->sync_mux);
