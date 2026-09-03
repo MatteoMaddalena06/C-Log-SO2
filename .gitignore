@@ -1,6 +1,8 @@
 #executable
-server
-client
+bin/
+
+#objects
+obj/
 
 # Prerequisites
 *.d
