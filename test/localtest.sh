@@ -54,7 +54,7 @@ cleanup() {
     # Termina il server
     if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
         echo "Arresto server (PID $SERVER_PID)..."
-        kill "$SERVER_PID" 2>/dev/null || true
+        kill -s SIGINT "$SERVER_PID" 2>/dev/null || true
 
         # Gli diamo un po' di tempo per terminare
         sleep 0.5
